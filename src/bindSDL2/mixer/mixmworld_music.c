@@ -1,54 +1,32 @@
-/*
- * mixmworld_music.c
- *
- *  Created on: 2016.4.18
- *      Author: MapleLeaf
- */
 
 /*
  * @file	mixmworld_music.c
  * @author  MapleLeaf
- * @date	2016.4.18
+ * @date	2016.4.21
  * @brief
  * 
  */
 
-#include <mixmworld_music.h>
+#include "mixmworld_music.h"
 
-#include <SDL2/SDL_mixer.h>
-#include <stdlib.h>
-#include <string.h>
-#include <limits.h>
-
-Mix_Music **_mixm_Music_PointList;
-char **_mixm_Music_NameList;
+Mixm_Music_Data **_mixm_Music_PointerList;
+const int MPLen=USHRT_MAX;
+int MainVolume=128;
 char *ConstString(const char *in){
 	char *out=(char *)malloc(strlen(in)+1);
 	return strcpy(out,in);
 }
-	
-int mixm_Music_Init(int chunkSize){
-	if(chunkSize<=0)
-		chunkSize = 512;
 
-	Mix_Init(MIX_INIT_MP3|MIX_INIT_FLAC|MIX_INIT_OGG|MIX_INIT_MOD);
-	if (
-			!Mix_OpenAudio(MIX_DEFAULT_FREQUENCY, MIX_DEFAULT_FORMAT, 4 /*MIX_DEFAULT_CHANNELS*/, chunkSize)
-			&&\
-	!_mixm_Music_NameList&&!_mixm_Music_PointList){
-		_mixm_Music_PointList = (Mix_Music **)calloc(sizeof (Mix_Music *),USHRT_MAX);
-		_mixm_Music_NameList = (char **)calloc(sizeof (char *),USHRT_MAX);
-		atexit(mixm_Music_Quit);
-		return 0;
-	}
-	return -1;
+
+int mixm_Music_Init(int chunkSize){
+	return mixm_Music_InitEx(MIX_DEFAULT_FREQUENCY, MIX_DEFAULT_FORMAT, MIX_DEFAULT_CHANNELS, chunkSize);
 }
 
 int mixm_Music_InitEx(int frequency, Uint16 format, int channels, int chunksize){
-	if (!Mix_OpenAudio(frequency, format, channels, chunksize)&&\
-	!_mixm_Music_NameList&&!_mixm_Music_PointList){
-		_mixm_Music_PointList = (Mix_Music **)calloc(sizeof (Mix_Music *),USHRT_MAX);
-		_mixm_Music_NameList = (char **)calloc(sizeof (char *),USHRT_MAX);
+	if (!_mixm_Music_PointerList &&\
+	Mix_Init(MIX_INIT_MP3|MIX_INIT_FLAC|MIX_INIT_OGG|MIX_INIT_MOD) &&\
+	!Mix_OpenAudio(frequency, format, channels, chunksize)){
+		_mixm_Music_PointerList = (Mixm_Music_Data **)calloc(sizeof (Mixm_Music_Data *), MPLen);
 		atexit(mixm_Music_Quit);
 		return 0;
 	}
@@ -56,62 +34,108 @@ int mixm_Music_InitEx(int frequency, Uint16 format, int channels, int chunksize)
 }
 
 void mixm_Music_Quit(void){
-	free(_mixm_Music_NameList);
-	free(_mixm_Music_PointList);
+	for (int i=0;i<MPLen;i++){
+		if (!_mixm_Music_PointerList[i]){
+			mixm_Music_Del(i);
+		}
+	}
+	free(_mixm_Music_PointerList);
 	Mix_Quit();
 }
 
 int mixm_Music_Load(ID id,const char *fname){
-	if (_mixm_Music_PointList[id])
+	if (_mixm_Music_PointerList[id])
 		return 1;
-	if ((_mixm_Music_PointList[id] = Mix_LoadMUS(fname))==NULL)
+		
+	_mixm_Music_PointerList[id] = (Mixm_Music_Data *)calloc(sizeof (Mixm_Music_Data),1);
+	
+	if ((_mixm_Music_PointerList[id]->dataPointer = Mix_LoadWAV(fname))==NULL){
+		free(_mixm_Music_PointerList[id]);
 		return -1;
-	_mixm_Music_NameList[id] = ConstString(fname);
+	}
+	
+	_mixm_Music_PointerList[id]->filePath = ConstString(fname);
 	return 0;
 }
 
 int mixm_Music_Set(ID id,const char *fname){
-	if (_mixm_Music_PointList[id])
+	if (_mixm_Music_PointerList[id])
 		mixm_Music_Del(id);
-	if (!(_mixm_Music_PointList[id] = Mix_LoadMUS(fname)))
-		return -1;
-	_mixm_Music_NameList[id] = ConstString(fname);
-	return 0;
+
+	return mixm_Music_Load(id,fname);
 }
 
 int mixm_Music_Del(ID id){
-	if (!_mixm_Music_PointList[id])
+	if (!_mixm_Music_PointerList[id])
 		return 1;
-	Mix_FreeMusic(_mixm_Music_PointList[id]);
-	free(_mixm_Music_NameList[id]);
-	_mixm_Music_NameList[id]=NULL;
-	_mixm_Music_PointList[id]=NULL;
+	
+	Mix_FreeChunk(_mixm_Music_PointerList[id]->dataPointer);
+	
+	free(_mixm_Music_PointerList[id]->filePath);
+	free(_mixm_Music_PointerList[id]);
+	_mixm_Music_PointerList[id]=NULL;
 	return 0;
 }
 
-const char* mixm_Music_GetNameofID(ID id){
-	return _mixm_Music_NameList[id];
+const char* mixm_Music_GetPath(ID id){
+	return _mixm_Music_PointerList[id]->filePath;
 }
 
-int mixm_Music_Play(ID id,int loop){
-	if (!_mixm_Music_PointList[id])
-		return 1;
-	Mix_PlayMusic(_mixm_Music_PointList[id],loop);
+int mixm_Music_Play(ID id,int loop,int volume){
+	if (!_mixm_Music_PointerList[id])
+		return -1;
+	if (mixm_Music_Playing(id))
+		return -1;
+	_mixm_Music_PointerList[id]->dataPointer->volume=volume;
+	Mix_PlayChannel(id,_mixm_Music_PointerList[id]->dataPointer,loop);
+	Mix_Volume(id,MainVolume);
 	return 0;
 }
 
 int mixm_Music_Pause(ID id){
-	Mix_PauseMusic();
-	return 0;
+	return _mixm_Music_PointerList[id] && (Mix_Pause(id),1);
 }
 
 int mixm_Music_Resume(ID id){
-	Mix_ResumeMusic();
-	return 0;
+	return _mixm_Music_PointerList[id] && (Mix_Resume(id),1);
 }
 
-int mixm_Music_Rewind(ID id){
-	Mix_RewindMusic();
-	return 0;
+int mixm_Music_Playing(ID id){
+	return _mixm_Music_PointerList[id] && Mix_Playing(id);
 }
 
+int mixm_Music_Stop(ID id){
+	if ((!_mixm_Music_PointerList[id])&&(mixm_Music_Playing(id)))
+		return -1;
+	Mix_HaltChannel(id);
+}
+
+int mixm_Music_Paused(ID id){
+	return _mixm_Music_PointerList[id] && Mix_Paused(id);
+}
+
+void mixm_Music_SetVolume(int v){
+	if (v>128){
+		MainVolume = 128;
+		return ;
+	}
+	if (v<0){
+		MainVolume = 0;
+		return ;
+	}
+	MainVolume = v;
+	Mix_Volume(-1,v);
+}
+int mixm_Music_ChangeVolume(ID id,int v){
+	if (v>128){
+		v = 128;
+	}
+	if (v<0){
+		v = 0;
+	}
+	if (!mixm_Music_Playing(id)){
+		return -1;
+	}
+	_mixm_Music_PointerList[id]->dataPointer->volume=v;
+	return 0;
+}
